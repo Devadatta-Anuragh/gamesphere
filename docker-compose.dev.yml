@@ -1,0 +1,44 @@
+# Dev dependencies only (NOT the full production infra from the PRD).
+# Mongo runs as a single-node replica set so multi-document transactions
+# (used by the wallet ledger for atomic, idempotent settlement) work locally.
+services:
+  mongo:
+    image: mongo:7
+    container_name: gamesphere-mongo
+    command: ['--replSet', 'rs0', '--bind_ip_all']
+    ports:
+      - '27017:27017'
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      # Initiate the replica set on first boot, then report healthy once it is.
+      test: >
+        mongosh --quiet --eval "
+          try { rs.status().ok }
+          catch (e) {
+            rs.initiate({ _id: 'rs0', members: [{ _id: 0, host: 'localhost:27017' }] }).ok
+          }
+        "
+      interval: 5s
+      timeout: 30s
+      retries: 30
+      start_period: 5s
+
+  redis:
+    image: redis:7-alpine
+    container_name: gamesphere-redis
+    # Host port 6380 (not 6379) to avoid colliding with other local Redis instances.
+    ports:
+      - '6380:6379'
+    command: ['redis-server', '--appendonly', 'yes']
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  mongo-data:
+  redis-data:
