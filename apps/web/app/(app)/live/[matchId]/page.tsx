@@ -1,13 +1,14 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { useParams } from 'next/navigation';
-import { Dice5 } from 'lucide-react';
+import { useParams, useRouter } from 'next/navigation';
+import { Dice5, DoorOpen } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { useSocket } from '@/lib/socket';
 import { formatMoney, formatTime, shortId } from '@/lib/format';
 import { Card, CardBody, CardHeader, Badge, StatusDot } from '@/components/ui/primitives';
 import { Button } from '@/components/ui/Button';
+import { Modal } from '@/components/ui/Modal';
 import { LudoBoard, type BoardSeat } from '@/components/board/LudoBoard';
 import { COLORS } from '@/components/board/board-geometry';
 
@@ -47,11 +48,13 @@ export default function LiveMatchPage() {
   const { matchId } = useParams<{ matchId: string }>();
   const { user } = useAuth();
   const { socket, connected } = useSocket();
+  const router = useRouter();
 
   const [state, setState] = useState<GameState | null>(null);
   const [legal, setLegal] = useState<LegalMove[]>([]);
   const [ended, setEnded] = useState<Ended | null>(null);
   const [log, setLog] = useState<LogLine[]>([]);
+  const [confirmQuit, setConfirmQuit] = useState(false);
   const prevTurn = useRef<number | null>(null);
 
   const addLog = (text: string) =>
@@ -101,6 +104,12 @@ export default function LiveMatchPage() {
 
   const roll = () => socket?.emit('game:roll', { matchId });
   const move = (tokenIndex: number) => socket?.emit('game:move', { matchId, tokenIndex });
+  const quit = () => {
+    socket?.emit('game:quit', { matchId });
+    setConfirmQuit(false);
+  };
+  const inProgress = state != null && state.status !== 'FINISHED' && !ended;
+  const stake = state ? Math.round(state.pool / 2) : 0;
 
   return (
     <div className="space-y-6">
@@ -115,8 +124,11 @@ export default function LiveMatchPage() {
           <Badge tone={state?.status === 'ACTIVE' ? 'green' : 'amber'}>
             {state?.status ?? 'connecting'}
           </Badge>
-          {state && (
-            <Badge tone="brand">pool {formatMoney(state.pool)}</Badge>
+          {state && <Badge tone="brand">pool {formatMoney(state.pool)}</Badge>}
+          {inProgress && (
+            <Button variant="danger" onClick={() => setConfirmQuit(true)}>
+              <DoorOpen size={15} /> Forfeit
+            </Button>
           )}
         </div>
       </div>
@@ -246,9 +258,38 @@ export default function LiveMatchPage() {
               <div>server seed (revealed): <span className="text-brand">{ended.dice.serverSeed.slice(0, 24)}…</span></div>
               <div className="mt-1 text-[10px]">sha256(serverSeed) === commitment → every roll is verifiable</div>
             </div>
+            <Button variant="ghost" onClick={() => router.push('/matchmaking')}>
+              ← Back to Lobby
+            </Button>
           </CardBody>
         </Card>
       )}
+
+      <Modal
+        open={confirmQuit}
+        onClose={() => setConfirmQuit(false)}
+        title="Forfeit match?"
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-muted">
+            Leaving now forfeits the match — your{' '}
+            <span className="font-mono text-amber-300">{formatMoney(stake)}</span>{' '}
+            stake is lost and your opponent wins the{' '}
+            <span className="font-mono text-emerald-300">
+              {formatMoney(state?.pool ?? 0)}
+            </span>{' '}
+            pool.
+          </p>
+          <div className="flex gap-3">
+            <Button variant="ghost" className="flex-1" onClick={() => setConfirmQuit(false)}>
+              Keep Playing
+            </Button>
+            <Button variant="danger" className="flex-1" onClick={quit}>
+              Forfeit
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

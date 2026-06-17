@@ -68,6 +68,10 @@ export function LudoBoard({ seats, startOffset, turnSeat }: Props) {
       } else if (startColor) {
         bg = withAlpha(startColor, 0.85);
         border = withAlpha(startColor, 0.95);
+      } else if (isSafe) {
+        // Plain safe squares read as "safe": lighter fill + brighter border.
+        bg = 'rgba(226,232,240,0.2)';
+        border = 'rgba(226,232,240,0.4)';
       }
 
       cells.push(
@@ -76,8 +80,12 @@ export function LudoBoard({ seats, startOffset, turnSeat }: Props) {
           style={{ gridRow: r + 1, gridColumn: c + 1, background: bg, borderColor: border }}
           className="rounded-[2px] border"
         >
-          {isSafe && !startColor && (
-            <span className="flex h-full w-full items-center justify-center text-[9px] text-slate-200/80">
+          {isSafe && (
+            <span
+              className={`flex h-full w-full items-center justify-center text-[9px] ${
+                startColor ? 'text-black/60' : 'text-slate-100/90'
+              }`}
+            >
               ★
             </span>
           )}

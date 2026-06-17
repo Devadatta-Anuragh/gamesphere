@@ -52,6 +52,14 @@ export const registerGameHandlers =
       if (!r.ok) fail(r.error);
     });
 
+    socket.on('game:quit', (payload: unknown) => {
+      const matchId = asMatchId(payload);
+      if (!matchId) return;
+      void service.handleQuit(userId, matchId).then((r) => {
+        if (!r.ok) fail(r.error);
+      });
+    });
+
     socket.on('disconnect', () => {
       service.handleDisconnect(userId);
     });

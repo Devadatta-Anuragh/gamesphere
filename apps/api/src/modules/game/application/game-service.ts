@@ -132,6 +132,29 @@ export class GameService {
     return this.doMove(session!, tokenIndex);
   }
 
+  /**
+   * Explicit forfeit: the quitting player loses immediately and the opponent
+   * wins the pool (settled idempotently). Unlike a disconnect there is no grace
+   * period — they chose to leave. Once stakes are escrowed, abandoning a match
+   * forfeits, exactly as a real-money table would enforce.
+   */
+  async handleQuit(
+    userId: string,
+    matchId: string,
+  ): Promise<Result<void, AppError>> {
+    const session = await this.getOrLoadSession(matchId);
+    if (!session) {
+      return err(AppError.notFound('MATCH_NOT_FOUND', 'No such match'));
+    }
+    const seat = seatOfUser(session, userId);
+    if (seat === undefined) {
+      return err(AppError.forbidden('NOT_A_PLAYER', 'You are not in this match'));
+    }
+    if (session.status === 'FINISHED') return ok(undefined);
+    await this.finishGame(session, opponentSeat(session, seat) ?? null);
+    return ok(undefined);
+  }
+
   handleDisconnect(userId: string): void {
     const matchId = this.userMatch.get(userId);
     if (!matchId) return;
