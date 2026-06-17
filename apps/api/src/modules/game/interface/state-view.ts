@@ -10,7 +10,13 @@ export interface GameStateView {
   lastRoll: number | null;
   winner: number | null;
   pool: number;
-  seats: { seat: number; userId: string; connected: boolean; tokens: number[] }[];
+  seats: {
+    seat: number;
+    userId: string;
+    username: string;
+    connected: boolean;
+    tokens: number[];
+  }[];
   startOffset: Record<number, number>;
   diceCommitment: string;
 }
@@ -26,6 +32,7 @@ export const toStateView = (session: GameSession): GameStateView => ({
   seats: session.seats.map((s) => ({
     seat: s.seat,
     userId: s.userId,
+    username: s.username,
     connected: session.connected.has(s.seat),
     tokens: [...(session.state.tokens[s.seat] ?? [])],
   })),

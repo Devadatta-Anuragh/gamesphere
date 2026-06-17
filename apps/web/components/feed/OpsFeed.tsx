@@ -28,17 +28,15 @@ const describe = (e: OpsEvent): string => {
   const p = e.payload;
   switch (e.type) {
     case 'USER_JOINED_QUEUE':
-      return `${shortId(String(p.userId))} · ${formatMoney(Number(p.entryFee))} table`;
+      return `${formatMoney(Number(p.entryFee))} table`;
     case 'MATCH_CREATED':
       return `room ${shortId(String(p.matchId))} · ${formatMoney(Number(p.entryFee))}`;
     case 'GAME_STARTED':
       return `room ${shortId(String(p.roomId))}`;
     case 'GAME_ENDED':
-      return p.winnerId
-        ? `winner ${shortId(String(p.winnerId))}`
-        : 'no winner';
+      return p.winnerId ? 'settled · winner paid' : 'no winner';
     case 'LEADERBOARD_UPDATED':
-      return `${shortId(String(p.userId))} → rating ${p.rating}`;
+      return `new rating ${p.rating}`;
     default:
       return '';
   }

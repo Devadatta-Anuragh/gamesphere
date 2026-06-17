@@ -9,6 +9,7 @@ import { formatMoney, formatTime, shortId } from '@/lib/format';
 import { Card, CardBody, CardHeader, Badge, StatusDot } from '@/components/ui/primitives';
 import { Button } from '@/components/ui/Button';
 import { LudoBoard, type BoardSeat } from '@/components/board/LudoBoard';
+import { COLORS } from '@/components/board/board-geometry';
 
 interface GameState {
   matchId: string;
@@ -18,7 +19,7 @@ interface GameState {
   lastRoll: number | null;
   winner: number | null;
   pool: number;
-  seats: (BoardSeat & { connected: boolean })[];
+  seats: (BoardSeat & { username: string; connected: boolean })[];
   startOffset: Record<number, number>;
   diceCommitment: string;
 }
@@ -31,6 +32,7 @@ interface LegalMove {
 }
 interface Ended {
   winnerId: string | null;
+  winnerName: string | null;
   winnings: number;
   rake: number;
   dice: { commitment: string; serverSeed: string; rolls: number };
@@ -74,7 +76,7 @@ export default function LiveMatchPage() {
     const onLegal = (d: { moves: LegalMove[] }) => setLegal(d.moves);
     const onEnded = (e: Ended) => {
       setEnded(e);
-      addLog(e.winnerId ? `Game over — winner ${shortId(e.winnerId)}` : 'Game over');
+      addLog(e.winnerName ? `Game over — winner ${e.winnerName}` : 'Game over');
     };
     const onErr = (e: { message: string }) => addLog(`⚠ ${e.message}`);
 
@@ -148,10 +150,12 @@ export default function LiveMatchPage() {
                 <div key={s.seat} className="flex items-center justify-between">
                   <span className="flex items-center gap-2 text-sm">
                     <StatusDot tone={s.connected ? 'green' : 'red'} />
-                    {s.userId === user?.id ? 'You' : shortId(s.userId)}
-                    {s.seat === state.turnSeat && (
-                      <Badge tone="brand">turn</Badge>
-                    )}
+                    <span
+                      className="inline-block h-2.5 w-2.5 rounded-full border border-white/40"
+                      style={{ background: COLORS[state.startOffset[s.seat] ?? 0] ?? '#94a3b8' }}
+                    />
+                    {s.userId === user?.id ? 'You' : (s.username ?? 'Opponent')}
+                    {s.seat === state.turnSeat && <Badge tone="brand">turn</Badge>}
                   </span>
                   <span className="font-mono text-[11px] text-muted">
                     home {s.tokens.filter((t) => t === 57).length}/4
@@ -182,7 +186,7 @@ export default function LiveMatchPage() {
                         onClick={() => move(m.tokenIndex)}
                         className="rounded-lg border border-brand/40 bg-brand/10 px-3 py-1.5 font-mono text-xs text-brand hover:bg-brand/20"
                       >
-                        token {m.tokenIndex} → {m.to === 57 ? 'HOME' : m.to}
+                        Token {m.tokenIndex + 1} → {m.to === 57 ? 'HOME' : m.to}
                         {m.captures.length > 0 ? ' ✦capture' : ''}
                       </button>
                     ))}
@@ -216,8 +220,8 @@ export default function LiveMatchPage() {
             title={
               ended.winnerId === user?.id
                 ? '🏆 You won!'
-                : ended.winnerId
-                  ? `Winner: ${shortId(ended.winnerId)}`
+                : ended.winnerName
+                  ? `🏆 ${ended.winnerName} won`
                   : 'Match ended'
             }
             subtitle="Settlement is atomic + idempotent · dice are provably fair"

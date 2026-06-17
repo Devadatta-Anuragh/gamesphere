@@ -7,8 +7,8 @@ import { Loader2, Swords } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useMatchStatus } from '@/lib/api-hooks';
-import { formatMoney, shortId } from '@/lib/format';
-import { Card, CardBody, CardHeader, Badge, StatCard } from '@/components/ui/primitives';
+import { formatMoney } from '@/lib/format';
+import { Card, CardBody, CardHeader, StatCard } from '@/components/ui/primitives';
 import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
 
@@ -45,9 +45,6 @@ export default function MatchmakingPage() {
     }
   };
 
-  const opponent = matched
-    ? status!.match!.players.find((p) => p.userId !== user?.id)
-    : null;
 
   return (
     <div className="space-y-6">
@@ -117,14 +114,14 @@ export default function MatchmakingPage() {
       <Modal open={Boolean(matched)} title="Match Found">
         {matched && (
           <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-muted">Match</span>
-              <Badge tone="brand">{shortId(status!.match!.id)}</Badge>
+            <div className="flex items-center justify-center gap-2 py-2 text-emerald-300">
+              <span className="text-2xl">⚔️</span>
+              <span className="text-sm font-medium">Opponent found — good luck!</span>
             </div>
             <div className="flex items-center justify-between">
-              <span className="text-sm text-muted">Opponent</span>
+              <span className="text-sm text-muted">Entry fee</span>
               <span className="font-mono text-sm text-ink">
-                {opponent ? shortId(opponent.userId) : '—'}
+                {formatMoney(status!.match!.entryFee)}
               </span>
             </div>
             <div className="flex items-center justify-between">

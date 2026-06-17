@@ -2,9 +2,15 @@ import type { Money } from '@gamesphere/shared';
 import type { GameState, Seat } from './ludo/state.js';
 import type { VerifiableDiceRoller } from './dice-roller.js';
 import type { TimerHandle } from './timer-scheduler.js';
-import type { MatchSeat } from '../application/ports.js';
 
 export type SessionStatus = 'WAITING' | 'ACTIVE' | 'FINISHED';
+
+/** A seat resolved with the player's display name (no raw ids reach the UI). */
+export interface SessionSeat {
+  readonly userId: string;
+  readonly seat: number;
+  readonly username: string;
+}
 
 /**
  * The authoritative, in-memory state of one live match. Holding this on the
@@ -16,7 +22,7 @@ export interface GameSession {
   readonly matchId: string;
   readonly entryFee: Money;
   readonly pool: Money;
-  readonly seats: readonly MatchSeat[];
+  readonly seats: readonly SessionSeat[];
   state: GameState;
   readonly dice: VerifiableDiceRoller;
   readonly connected: Set<Seat>;
@@ -35,6 +41,11 @@ export const userOfSeat = (
   session: GameSession,
   seat: Seat,
 ): string | undefined => session.seats.find((s) => s.seat === seat)?.userId;
+
+export const usernameOfSeat = (
+  session: GameSession,
+  seat: Seat,
+): string | undefined => session.seats.find((s) => s.seat === seat)?.username;
 
 export const opponentSeat = (session: GameSession, seat: Seat): Seat | undefined =>
   session.seats.find((s) => s.seat !== seat)?.seat;

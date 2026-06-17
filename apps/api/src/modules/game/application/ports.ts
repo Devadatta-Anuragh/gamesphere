@@ -39,3 +39,8 @@ export interface ActivePlayersReleaser {
 
 /** Builds a fresh authoritative dice source for a new match. */
 export type DiceRollerFactory = () => VerifiableDiceRoller;
+
+/** Resolves a player's display name so the UI never shows raw user ids. */
+export interface UserDirectory {
+  usernameOf(userId: string): Promise<string | null>;
+}

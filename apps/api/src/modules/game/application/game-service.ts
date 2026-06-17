@@ -20,7 +20,9 @@ import {
   opponentSeat,
   seatOfUser,
   userOfSeat,
+  usernameOfSeat,
   type GameSession,
+  type SessionSeat,
 } from '../domain/game-session.js';
 import type { GameGateway } from '../domain/game-gateway.js';
 import type { TimerScheduler } from '../domain/timer-scheduler.js';
@@ -30,6 +32,7 @@ import type {
   DiceRollerFactory,
   MatchGateway,
   SettlementService,
+  UserDirectory,
 } from './ports.js';
 
 export interface GameServiceOptions {
@@ -70,6 +73,7 @@ export class GameService {
     private readonly gateway: GameGateway,
     private readonly scheduler: TimerScheduler,
     private readonly newDice: DiceRollerFactory,
+    private readonly directory: UserDirectory,
     private readonly clock: Clock,
     private readonly logger: Logger,
     private readonly options: GameServiceOptions,
@@ -203,7 +207,14 @@ export class GameService {
       if (!info) return null;
       if (info.status !== 'PENDING' && info.status !== 'ACTIVE') return null;
 
-      const seats = [...info.players].sort((a, b) => a.seat - b.seat);
+      const ordered = [...info.players].sort((a, b) => a.seat - b.seat);
+      const seats: SessionSeat[] = await Promise.all(
+        ordered.map(async (s) => ({
+          userId: s.userId,
+          seat: s.seat,
+          username: (await this.directory.usernameOf(s.userId)) ?? `Seat ${s.seat}`,
+        })),
+      );
       const missedTurns: Record<Seat, number> = {};
       for (const s of seats) missedTurns[s.seat] = 0;
 
@@ -299,6 +310,8 @@ export class GameService {
 
     this.gateway.toRoom(session.matchId, 'game:ended', {
       winnerId,
+      winnerName:
+        winnerSeat !== null ? (usernameOfSeat(session, winnerSeat) ?? null) : null,
       winnings,
       rake,
       // Reveal the seed so anyone can verify every roll was fair.

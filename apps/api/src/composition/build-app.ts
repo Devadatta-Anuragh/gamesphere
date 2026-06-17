@@ -276,6 +276,10 @@ export const buildApp = async (config: AppConfig): Promise<AppContext> => {
     realtime,
     new RealTimerScheduler(),
     () => new ProvablyFairDiceRoller(),
+    {
+      usernameOf: async (userId) =>
+        (await userRepo.findById(asUserId(userId)))?.username ?? null,
+    },
     clock,
     logger,
     {

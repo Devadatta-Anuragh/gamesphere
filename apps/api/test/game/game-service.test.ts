@@ -81,6 +81,7 @@ describe('GameService — full match + settlement', () => {
       gateway,
       scheduler,
       () => new ProvablyFairDiceRoller('game-seed'.padEnd(64, '0')),
+      { usernameOf: async (id: string) => `name-${id}` },
       clock,
       silentLogger,
       { turnTimeoutMs: 10_000, disconnectGraceMs: 10_000, maxMissedTurns: 2 },
