@@ -9,4 +9,6 @@ export interface MatchRepository {
   setResult(matchId: string, winnerId: string | null, status: MatchStatus): Promise<void>;
   /** Most recent matches, for the ops dashboard. */
   listRecent(limit: number): Promise<Match[]>;
+  /** Count of matches currently pending or active. */
+  countActive(): Promise<number>;
 }

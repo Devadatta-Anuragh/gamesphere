@@ -11,7 +11,9 @@ import {
 import type { LedgerEntry } from '../domain/ledger.js';
 import { netDeltas, type Transaction } from '../domain/transaction.js';
 import type {
+  AccountTypeBalance,
   CommitOutcome,
+  LedgerTransactionView,
   WalletRepository,
 } from '../domain/wallet-repository.js';
 import {
@@ -154,5 +156,65 @@ export class MongoWalletRepository implements WalletRepository {
       amount: money(d.amount),
       createdAt: d.createdAt,
     }));
+  }
+
+  async sumByAccountType(): Promise<AccountTypeBalance[]> {
+    const rows = await BalanceModel.aggregate<{ _id: string; balance: number }>([
+      { $group: { _id: '$accountType', balance: { $sum: '$balance' } } },
+      { $sort: { _id: 1 } },
+    ]).exec();
+    return rows.map((r) => ({ type: r._id, balance: money(r.balance) }));
+  }
+
+  async listRecentTransactions(
+    userId: string,
+    limit: number,
+  ): Promise<LedgerTransactionView[]> {
+    // Most recent transaction ids that touched this user's account.
+    const userEntries = await LedgerEntryModel.find({
+      accountType: AccountType.User,
+      accountRef: userId,
+    })
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .lean<LedgerEntryDoc[]>()
+      .exec();
+
+    const txIds = [...new Set(userEntries.map((e) => e.transactionId))];
+    if (txIds.length === 0) return [];
+
+    const [headers, allLegs] = await Promise.all([
+      TransactionModel.find({ _id: { $in: txIds } }).lean().exec(),
+      LedgerEntryModel.find({ transactionId: { $in: txIds } })
+        .lean<LedgerEntryDoc[]>()
+        .exec(),
+    ]);
+
+    const headerById = new Map(headers.map((h) => [h._id, h]));
+    const legsByTx = new Map<string, LedgerEntryDoc[]>();
+    for (const leg of allLegs) {
+      const list = legsByTx.get(leg.transactionId) ?? [];
+      list.push(leg);
+      legsByTx.set(leg.transactionId, list);
+    }
+
+    return txIds
+      .map((txId) => {
+        const header = headerById.get(txId);
+        const legs = legsByTx.get(txId) ?? [];
+        return {
+          transactionId: txId,
+          type: header?.type ?? 'UNKNOWN',
+          createdAt: header?.createdAt ?? legs[0]?.createdAt ?? new Date(0),
+          legs: legs.map((l) => ({
+            accountType: l.accountType,
+            accountRef: l.accountRef,
+            direction: l.direction,
+            reason: l.reason,
+            amount: money(l.amount),
+          })),
+        };
+      })
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
   }
 }

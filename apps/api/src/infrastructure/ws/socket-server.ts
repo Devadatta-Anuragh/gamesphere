@@ -48,8 +48,10 @@ export const createSocketServer = (
 
   io.on('connection', (socket) => {
     // Join a per-user room so events can be pushed to a specific player
-    // regardless of which socket/instance they are on.
+    // regardless of which socket/instance they are on, plus the global `ops`
+    // room that powers the dashboard's live activity feed.
     void socket.join(`user:${socket.data.userId}`);
+    void socket.join('ops');
     logger.debug({ userId: socket.data.userId, sid: socket.id }, 'socket connected');
     socket.on('disconnect', (reason) => {
       logger.debug({ userId: socket.data.userId, reason }, 'socket disconnected');

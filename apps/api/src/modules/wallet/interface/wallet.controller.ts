@@ -7,12 +7,14 @@ import type { IdGenerator } from '@/shared/id-generator.js';
 import { EntryReason } from '../domain/ledger.js';
 import type { CreditFunds } from '../application/credit-funds.js';
 import type { GetWallet } from '../application/get-wallet.js';
-import { DepositSchema, toWalletDto } from './dto.js';
+import type { GetLedgerJournal } from '../application/get-ledger-journal.js';
+import { DepositSchema, toLedgerDto, toWalletDto } from './dto.js';
 
 export class WalletController {
   constructor(
     private readonly getWallet: GetWallet,
     private readonly creditFunds: CreditFunds,
+    private readonly getLedgerJournal: GetLedgerJournal,
     private readonly ids: IdGenerator,
   ) {}
 
@@ -43,5 +45,12 @@ export class WalletController {
     });
     if (!result.ok) throw result.error;
     sendOk(res, { balance: result.value.balance });
+  };
+
+  ledger = async (req: Request, res: Response): Promise<void> => {
+    const userId = this.requireUser(req);
+    const result = await this.getLedgerJournal.execute(userId);
+    if (!result.ok) throw result.error;
+    sendOk(res, { transactions: result.value.map(toLedgerDto) });
   };
 }

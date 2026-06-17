@@ -20,3 +20,5 @@ pnpm-debug.log*
 .idea/
 .vscode/
 *.tsbuildinfo
+
+docs/client.md

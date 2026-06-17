@@ -8,6 +8,7 @@ export const createWalletRoutes = (
 ): Router => {
   const router = Router();
   router.get('/wallet', authGuard, asyncHandler(wallet.view));
+  router.get('/wallet/ledger', authGuard, asyncHandler(wallet.ledger));
   router.post('/wallet/deposit', authGuard, asyncHandler(wallet.deposit));
   return router;
 };

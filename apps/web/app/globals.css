@@ -1,0 +1,38 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: 8 11 18; /* near-black slate */
+  --surface: 13 18 28;
+  --panel: 18 24 36;
+  --line: 32 41 58;
+  --ink: 226 232 240; /* slate-200 */
+  --muted: 130 144 166;
+  --brand: 45 212 191; /* teal-400 */
+  --font-mono: 'SFMono-Regular';
+}
+
+html,
+body {
+  background: rgb(var(--bg));
+  color: rgb(var(--ink));
+}
+
+body {
+  font-feature-settings: 'tnum' 1; /* tabular numbers for dashboards */
+  background-image:
+    radial-gradient(900px 500px at 12% -10%, rgb(45 212 191 / 0.06), transparent),
+    radial-gradient(800px 500px at 100% 0%, rgb(56 189 248 / 0.05), transparent);
+  min-height: 100vh;
+}
+
+/* Thin technical scrollbars */
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: rgb(var(--line));
+  border-radius: 8px;
+}

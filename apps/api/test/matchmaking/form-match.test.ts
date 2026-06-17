@@ -32,6 +32,9 @@ class FakeMatchRepo implements MatchRepository {
   async listRecent() {
     return [];
   }
+  async countActive() {
+    return 0;
+  }
 }
 
 class FakeQueue implements MatchmakingQueue {

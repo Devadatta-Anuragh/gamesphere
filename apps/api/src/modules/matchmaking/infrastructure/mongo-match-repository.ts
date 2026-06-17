@@ -69,4 +69,8 @@ export class MongoMatchRepository implements MatchRepository {
       .exec();
     return docs.map(toDomain);
   }
+
+  countActive(): Promise<number> {
+    return MatchModel.countDocuments({ status: { $in: ACTIVE_STATUSES } }).exec();
+  }
 }

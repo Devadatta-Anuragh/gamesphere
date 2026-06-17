@@ -7,7 +7,9 @@ import {
 import type { LedgerEntry } from '@/modules/wallet/domain/ledger.js';
 import { netDeltas, type Transaction } from '@/modules/wallet/domain/transaction.js';
 import type {
+  AccountTypeBalance,
   CommitOutcome,
+  LedgerTransactionView,
   WalletRepository,
 } from '@/modules/wallet/domain/wallet-repository.js';
 import { AccountType } from '@/modules/wallet/domain/account.js';
@@ -64,9 +66,12 @@ export class InMemoryWalletRepository implements WalletRepository {
         createdAt: now,
       });
     }
+    this.txTypes.set(tx.id, tx.type);
     this.seenKeys.add(tx.idempotencyKey);
     return { status: 'committed' };
   }
+
+  private readonly txTypes = new Map<string, string>();
 
   async listUserEntries(userId: string, limit: number): Promise<LedgerEntry[]> {
     return this.entries
@@ -76,6 +81,50 @@ export class InMemoryWalletRepository implements WalletRepository {
       )
       .reverse()
       .slice(0, limit);
+  }
+
+  async sumByAccountType(): Promise<AccountTypeBalance[]> {
+    const byType = new Map<string, number>();
+    for (const [key, balance] of this.balances) {
+      const type = key.split(':')[0]!;
+      byType.set(type, (byType.get(type) ?? 0) + balance);
+    }
+    return [...byType.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([type, balance]) => ({ type, balance: money(balance) }));
+  }
+
+  async listRecentTransactions(
+    userId: string,
+    limit: number,
+  ): Promise<LedgerTransactionView[]> {
+    const txIds = [
+      ...new Set(
+        this.entries
+          .filter(
+            (e) => e.account.type === AccountType.User && e.account.ref === userId,
+          )
+          .map((e) => e.transactionId),
+      ),
+    ]
+      .reverse()
+      .slice(0, limit);
+
+    return txIds.map((txId) => {
+      const legs = this.entries.filter((e) => e.transactionId === txId);
+      return {
+        transactionId: txId,
+        type: this.txTypes.get(txId) ?? 'UNKNOWN',
+        createdAt: legs[0]?.createdAt ?? this.clock.now(),
+        legs: legs.map((l) => ({
+          accountType: l.account.type,
+          accountRef: l.account.ref,
+          direction: l.direction,
+          reason: l.reason,
+          amount: l.amount,
+        })),
+      };
+    });
   }
 
   /** Test-only invariant helper: money is conserved across all accounts. */

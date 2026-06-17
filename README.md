@@ -5,9 +5,11 @@ the spirit of *Ludo Naira*), built as an engineering portfolio piece. The focus
 is **backend depth** — financial correctness, an authoritative real-time game
 loop, matchmaking, rankings, and event-driven architecture — not UI polish.
 
-> **Status:** backend complete (phases P0–P6). 45 tests passing, typecheck +
-> lint clean, verified against a live MongoDB replica set and Redis. Frontend
-> and production infra (AWS/Prometheus/Grafana/CI) are intentionally deferred.
+> **Status:** backend (P0–P6) + an ops/observability API + a live **Next.js
+> ops-console frontend** (P7) are complete. 45 API tests passing, typecheck +
+> lint clean, web builds, and a headless two-bot E2E drives the whole realtime
+> stack (matchmaking → play → settlement → money conserved). Production infra
+> (AWS/Prometheus/Grafana/CI) is intentionally deferred (P8).
 
 ---
 
@@ -47,17 +49,22 @@ multiplayer-game/
 ├─ packages/
 │  └─ shared/                branded ids, Money, domain-event contracts
 └─ apps/
-   └─ api/
-      ├─ src/
-      │  ├─ main.ts           entrypoint
-      │  ├─ composition/      build-app.ts — the composition root (all wiring)
-      │  ├─ config/           zod-validated env
-      │  ├─ shared/           Result, AppError, Clock, IdGenerator, logger
-      │  ├─ infrastructure/   mongo, redis, http (express), ws (socket.io)
-      │  └─ modules/          auth · wallet · game · matchmaking ·
-      │                       leaderboard · notification · anticheat · events
-      ├─ test/                vitest unit/integration + in-memory test doubles
-      └─ scripts/             verify-wallet.ts (live integrity check)
+   ├─ api/
+   │  ├─ src/
+   │  │  ├─ main.ts           entrypoint
+   │  │  ├─ composition/      build-app.ts — the composition root (all wiring)
+   │  │  ├─ config/           zod-validated env
+   │  │  ├─ shared/           Result, AppError, Clock, IdGenerator, logger
+   │  │  ├─ infrastructure/   mongo, redis, http (express), ws, metrics
+   │  │  └─ modules/          auth · wallet · game · matchmaking · leaderboard ·
+   │  │                       notification · anticheat · events · ops
+   │  ├─ test/                vitest unit/integration + in-memory test doubles
+   │  └─ scripts/             verify-wallet.ts (live ledger integrity check)
+   └─ web/                    Next.js 15 ops-console dashboard
+      ├─ app/                 login + 7 screens (route groups)
+      ├─ components/          ui · nav · board (animated Ludo) · feed · charts
+      ├─ lib/                 api · auth · socket · query hooks · format
+      └─ scripts/             verify-live.mjs (headless two-bot E2E)
 ```
 
 Each module is layered `domain/ · application/ · infrastructure/ · interface/`.
@@ -92,19 +99,29 @@ cp .env.example apps/api/.env   # sensible local defaults already filled in
 pnpm dev:api          # tsx watch — http://localhost:4000
 ```
 
-### 5. Quality gates
+### 5. Run the frontend (ops console)
 ```bash
-pnpm -r typecheck     # strict tsc, no emit
+pnpm dev:web          # Next.js — http://localhost:3000
+```
+Open two browser tabs, log in as two different usernames, and follow the demo
+flow (matchmaking → live match → leaderboard/wallet/metrics update live).
+
+### 6. Quality gates
+```bash
+pnpm -r typecheck     # strict tsc, no emit (api · shared · web)
 pnpm test             # vitest (45 tests)
 pnpm lint             # eslint
+pnpm build:web        # production build of the dashboard
 ```
 
-### 6. Prove the money handling (against live Mongo)
+### 7. Prove it for real (against live infra)
 ```bash
+# Money: concurrent double-spend prevention, idempotent settlement, Σ balances == 0
 pnpm --filter @gamesphere/api exec tsx scripts/verify-wallet.ts
+
+# Realtime: two bots play a full game end-to-end (API must be running)
+node apps/web/scripts/verify-live.mjs
 ```
-Asserts: concurrent double-spend prevention, idempotent settlement, and
-Σ(all account balances) === 0.
 
 ---
 
@@ -118,11 +135,18 @@ All under `/api`; authenticated routes need `Authorization: Bearer <jwt>`.
 | `POST` | `/api/auth/login` | – | Login or register by username → `{ token, user }` |
 | `GET` | `/api/users/me` | ✓ | Current user profile |
 | `GET` | `/api/wallet` | ✓ | Balance + recent ledger entries |
+| `GET` | `/api/wallet/ledger` | ✓ | Recent transactions with both legs (transfer journal) |
 | `POST` | `/api/wallet/deposit` | ✓ | `{ amount, reference? }` (reference ⇒ idempotent) |
 | `POST` | `/api/matchmaking/join` | ✓ | `{ entryFee }` — enter a cash-table queue |
 | `POST` | `/api/matchmaking/leave` | ✓ | `{ entryFee }` |
 | `GET` | `/api/matchmaking/status` | ✓ | `{ state, match, queuedTiers }` |
 | `GET` | `/api/leaderboard` | – | `?scope=global\|daily\|weekly&limit=10` |
+| `GET` | `/api/ops/overview` | – | Dashboard counters + dependency health |
+| `GET` | `/api/ops/metrics` | – | RPS, latency, error rate, redis hit ratio, series |
+| `GET` | `/api/ops/ledger-integrity` | – | Σ balances per account type + `conserved` |
+
+> `/api/ops/*` are read-only and mounted unthrottled (the dashboard polls them).
+> Domain events are also forwarded to an `ops` Socket.IO room for the live feed.
 
 Entry-fee tiers (minor units): `10000`, `50000`, `100000` (₦100 / ₦500 / ₦1,000).
 New users receive a ₦500 signup bonus.
@@ -163,13 +187,23 @@ on a six / capture / finishing a token; triple-six forfeits the turn.
 
 ---
 
+## Frontend (ops console)
+
+A Next.js 15 dashboard whose job is to make the backend legible to an
+interviewer — dark "mission-control" aesthetic, all data live. Seven screens:
+**Dashboard** (live counters + activity feed + health), **Matchmaking**
+(queue + match-found modal), **Live Match** (animated Ludo board driven by
+server events, with the provably-fair dice reveal on game end), **Leaderboard**
+(Redis ZSET rankings), **Wallet** (double-entry journal + "money conserved = 0"),
+**Metrics** (RPS/latency/error-rate charts), and **Architecture** (system
+diagram). See `docs/client.md` for the demo script.
+
 ## Roadmap
 
 - **Done — P0–P6:** scaffold, auth, wallet/ledger, Ludo engine + provably-fair
   dice, matchmaking, realtime game + settlement, leaderboard/events/
   notifications/anti-cheat.
-- **P7 (next):** minimal Next.js frontend to visualize the backend (login,
-  lobby, match room, wallet, leaderboard, ops dashboard).
+- **Done — P7:** ops/observability API + the Next.js ops-console frontend.
 - **P8 (later):** Prometheus/Grafana metrics, Nginx, AWS EC2 + Docker Compose,
   GitHub Actions CI/CD.
 

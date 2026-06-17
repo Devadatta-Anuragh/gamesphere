@@ -57,6 +57,9 @@ const pickAutoMove = (moves: readonly LegalMove[]): LegalMove =>
  */
 export class GameService {
   private readonly sessions = new Map<string, GameSession>();
+  // Dedupes concurrent first-joins so two sockets arriving at once cannot each
+  // build a separate session (which would deadlock the "both connected" check).
+  private readonly loading = new Map<string, Promise<GameSession | null>>();
   private readonly userMatch = new Map<string, string>();
 
   constructor(
@@ -78,7 +81,7 @@ export class GameService {
     userId: string,
     matchId: string,
   ): Promise<Result<void, AppError>> {
-    const session = this.sessions.get(matchId) ?? (await this.loadSession(matchId));
+    const session = await this.getOrLoadSession(matchId);
     if (!session) {
       return err(AppError.notFound('MATCH_NOT_FOUND', 'No such active match'));
     }
@@ -182,30 +185,51 @@ export class GameService {
 
   // ---- Lifecycle -----------------------------------------------------------
 
-  private async loadSession(matchId: string): Promise<GameSession | null> {
-    const info = await this.matches.load(matchId);
-    if (!info) return null;
-    if (info.status !== 'PENDING' && info.status !== 'ACTIVE') return null;
+  /**
+   * Returns the live session, loading it once. Concurrent callers share a
+   * single in-flight load (the promise is registered synchronously before the
+   * first await), so two simultaneous joins never create rival sessions.
+   */
+  private async getOrLoadSession(
+    matchId: string,
+  ): Promise<GameSession | null> {
+    const existing = this.sessions.get(matchId);
+    if (existing) return existing;
+    const inflight = this.loading.get(matchId);
+    if (inflight) return inflight;
 
-    const seats = [...info.players].sort((a, b) => a.seat - b.seat);
-    const missedTurns: Record<Seat, number> = {};
-    for (const s of seats) missedTurns[s.seat] = 0;
+    const load = (async (): Promise<GameSession | null> => {
+      const info = await this.matches.load(matchId);
+      if (!info) return null;
+      if (info.status !== 'PENDING' && info.status !== 'ACTIVE') return null;
 
-    const session: GameSession = {
-      matchId,
-      entryFee: info.entryFee,
-      pool: info.pool,
-      seats,
-      state: createInitialState(seats.length, seats[0]!.seat),
-      dice: this.newDice(),
-      connected: new Set<Seat>(),
-      missedTurns,
-      status: info.status === 'ACTIVE' ? 'ACTIVE' : 'WAITING',
-      turnTimer: null,
-      graceTimers: new Map(),
-    };
-    this.sessions.set(matchId, session);
-    return session;
+      const seats = [...info.players].sort((a, b) => a.seat - b.seat);
+      const missedTurns: Record<Seat, number> = {};
+      for (const s of seats) missedTurns[s.seat] = 0;
+
+      const session: GameSession = {
+        matchId,
+        entryFee: info.entryFee,
+        pool: info.pool,
+        seats,
+        state: createInitialState(seats.length, seats[0]!.seat),
+        dice: this.newDice(),
+        connected: new Set<Seat>(),
+        missedTurns,
+        status: info.status === 'ACTIVE' ? 'ACTIVE' : 'WAITING',
+        turnTimer: null,
+        graceTimers: new Map(),
+      };
+      this.sessions.set(matchId, session);
+      return session;
+    })();
+
+    this.loading.set(matchId, load);
+    try {
+      return await load;
+    } finally {
+      this.loading.delete(matchId);
+    }
   }
 
   private async startGame(session: GameSession): Promise<void> {

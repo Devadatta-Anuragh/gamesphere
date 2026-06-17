@@ -1,6 +1,8 @@
 import { createServer, type Server as HttpServer } from 'node:http';
+import { Router } from 'express';
 import { asUserId, money } from '@gamesphere/shared';
 import type { AppConfig } from '@/config/env.js';
+import { MetricsRegistry } from '@/infrastructure/metrics/metrics-registry.js';
 import { createLogger, type Logger } from '@/shared/logger.js';
 import { SystemClock } from '@/shared/clock.js';
 import { NanoidGenerator } from '@/shared/id-generator.js';
@@ -20,6 +22,8 @@ import { createAuthRoutes } from '@/modules/auth/interface/routes.js';
 import { MongoWalletRepository } from '@/modules/wallet/infrastructure/mongo-wallet-repository.js';
 import { CreditFunds } from '@/modules/wallet/application/credit-funds.js';
 import { GetWallet } from '@/modules/wallet/application/get-wallet.js';
+import { GetLedgerJournal } from '@/modules/wallet/application/get-ledger-journal.js';
+import { GetLedgerIntegrity } from '@/modules/wallet/application/get-ledger-integrity.js';
 import { HoldEntryFee } from '@/modules/wallet/application/hold-entry-fee.js';
 import { RefundEntryFee } from '@/modules/wallet/application/refund-entry-fee.js';
 import { SignupBonusGranter } from '@/modules/wallet/application/signup-bonus-granter.js';
@@ -54,6 +58,13 @@ import { SocketNotifier } from '@/modules/notification/infrastructure/socket-not
 import { MongoPlayerEventRepository } from '@/modules/anticheat/infrastructure/mongo-player-event-repository.js';
 import { AntiCheatMonitor } from '@/modules/anticheat/application/anti-cheat-monitor.js';
 import { DomainEventType, type GameEndedEvent } from '@gamesphere/shared';
+import { GetOverview } from '@/modules/ops/application/get-overview.js';
+import { GetMetrics } from '@/modules/ops/application/get-metrics.js';
+import { OpsEventForwarder } from '@/modules/ops/application/ops-event-forwarder.js';
+import { DependencyHealthChecker } from '@/modules/ops/infrastructure/health-checker.js';
+import { SocketOpsBroadcaster } from '@/modules/ops/infrastructure/socket-ops-broadcaster.js';
+import { OpsController } from '@/modules/ops/interface/ops.controller.js';
+import { createOpsRoutes } from '@/modules/ops/interface/routes.js';
 
 export interface AppContext {
   readonly config: AppConfig;
@@ -79,6 +90,7 @@ export const buildApp = async (config: AppConfig): Promise<AppContext> => {
   // --- Shared adapters (ports -> concretions) ---
   const clock = new SystemClock();
   const ids = new NanoidGenerator();
+  const metrics = new MetricsRegistry(clock);
   const tokens = new JwtTokenService({
     secret: config.JWT_SECRET,
     expiresIn: config.JWT_EXPIRES_IN,
@@ -95,12 +107,19 @@ export const buildApp = async (config: AppConfig): Promise<AppContext> => {
   const holdEntryFee = new HoldEntryFee(walletRepo, ids);
   const refundEntryFee = new RefundEntryFee(walletRepo, ids);
   const settleMatch = new SettleMatch(walletRepo, ids, config.DEFAULT_RAKE_BPS);
+  const getLedgerJournal = new GetLedgerJournal(walletRepo);
+  const getLedgerIntegrity = new GetLedgerIntegrity(walletRepo);
   const signupBonus = new SignupBonusGranter(
     creditFunds,
     money(config.SIGNUP_BONUS_MINOR),
     logger,
   );
-  const walletController = new WalletController(getWallet, creditFunds, ids);
+  const walletController = new WalletController(
+    getWallet,
+    creditFunds,
+    getLedgerJournal,
+    ids,
+  );
 
   // --- Auth / identity module ---
   const userRepo = new MongoUserRepository();
@@ -189,9 +208,14 @@ export const buildApp = async (config: AppConfig): Promise<AppContext> => {
   );
 
   // --- HTTP + WebSocket transport ---
+  // The ops router is populated after Socket.IO is created (it needs the io
+  // connection count), but is mounted now so its routes resolve at request time.
+  const opsRouter = Router();
   const app = createHttpApp({
     config,
     logger,
+    metrics,
+    opsRouter,
     mountApi: (router) => {
       router.use(createAuthRoutes(authController, userController, authGuard));
       router.use(createWalletRoutes(walletController, authGuard));
@@ -205,6 +229,30 @@ export const buildApp = async (config: AppConfig): Promise<AppContext> => {
 
   // Push notifications: turn domain events into realtime client messages.
   new SocketNotifier(eventBus, realtime).register();
+
+  // --- Ops / observability module ---
+  const health = new DependencyHealthChecker(redis);
+  const wsStats = { connectionCount: () => io.engine.clientsCount };
+  const opsController = new OpsController(
+    new GetOverview(
+      {
+        activePlayers: () => redis.scard('mm:active'),
+        queueLength: async () => {
+          const sizes = await Promise.all(
+            ENTRY_FEE_TIERS.map((fee) => matchmakingQueue.size(Number(fee))),
+          );
+          return sizes.reduce((a, b) => a + b, 0);
+        },
+      },
+      { activeMatches: () => matchRepo.countActive() },
+      wsStats,
+      health,
+    ),
+    new GetMetrics(metrics, wsStats, health),
+    getLedgerIntegrity,
+  );
+  opsRouter.use(createOpsRoutes(opsController));
+  new OpsEventForwarder(eventBus, new SocketOpsBroadcaster(io)).register();
 
   // --- Game module (authoritative realtime loop) ---
   const gameService = new GameService(
