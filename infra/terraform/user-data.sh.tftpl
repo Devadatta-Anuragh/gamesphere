@@ -1,0 +1,195 @@
+#!/usr/bin/env bash
+#
+# Cloud-init bootstrap for the GameSphere demo box.
+# Installs the toolchain, clones the repo, runs Mongo+Redis via docker compose,
+# builds the web app, and serves API + web behind nginx as systemd services.
+#
+# Templated by Terraform: ${project_name}, ${repo_url}, ${repo_branch},
+# ${public_ip}, ${jwt_secret} are substituted at apply time. Everything else
+# is plain shell. Watch progress with: sudo tail -f /var/log/cloud-init-output.log
+set -euxo pipefail
+
+export DEBIAN_FRONTEND=noninteractive
+
+# --- 0. Swap: headroom on a 2GB box so the Next.js build never OOMs ------
+if [ ! -f /swapfile ]; then
+  fallocate -l 4G /swapfile
+  chmod 600 /swapfile
+  mkswap /swapfile
+  swapon /swapfile
+  echo '/swapfile none swap sw 0 0' >> /etc/fstab
+fi
+
+# --- 1. Base packages ----------------------------------------------------
+apt-get update -y
+apt-get install -y curl git ca-certificates gnupg nginx
+
+# --- 2. Node.js 20 (NodeSource) ------------------------------------------
+curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+apt-get install -y nodejs
+
+# --- 3. pnpm via corepack (repo pins pnpm@9.15.9) ------------------------
+corepack enable
+corepack prepare pnpm@9.15.9 --activate
+
+# --- 4. Docker engine + compose plugin (for Mongo + Redis) ---------------
+install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+chmod a+r /etc/apt/keyrings/docker.asc
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" > /etc/apt/sources.list.d/docker.list
+apt-get update -y
+apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+systemctl enable --now docker
+usermod -aG docker ubuntu
+
+# --- 5. Clone the application --------------------------------------------
+APP_DIR=/opt/${project_name}
+if [ ! -d "$APP_DIR/.git" ]; then
+  git clone --branch ${repo_branch} ${repo_url} "$APP_DIR"
+fi
+chown -R ubuntu:ubuntu "$APP_DIR"
+
+# --- 6. API environment (production) -------------------------------------
+# Mongo runs as single-node replica set rs0 (needed for the wallet's multi-doc
+# transactions). Redis maps host 6380 in docker-compose.dev.yml.
+cat > "$APP_DIR/apps/api/.env" <<'EOF'
+NODE_ENV=production
+PORT=4000
+LOG_LEVEL=info
+MONGO_URI=mongodb://localhost:27017/${project_name}?replicaSet=rs0
+REDIS_URL=redis://localhost:6380
+JWT_SECRET=${jwt_secret}
+JWT_EXPIRES_IN=7d
+CORS_ORIGIN=http://${public_ip}
+EOF
+chown ubuntu:ubuntu "$APP_DIR/apps/api/.env"
+
+# --- 7. Install deps and build the web app (API origin baked in) ---------
+sudo -u ubuntu bash <<'UBUNTU'
+set -euxo pipefail
+export PATH=/usr/bin:/usr/local/bin:$PATH
+cd /opt/${project_name}
+export NEXT_PUBLIC_API_URL=http://${public_ip}
+pnpm install --frozen-lockfile
+pnpm build:web
+UBUNTU
+
+# --- 8. Mongo + Redis as a systemd-managed compose stack -----------------
+cat > /etc/systemd/system/${project_name}-infra.service <<'EOF'
+[Unit]
+Description=GameSphere infra (Mongo + Redis via docker compose)
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/${project_name}
+ExecStart=/usr/bin/docker compose -f docker-compose.dev.yml up -d
+ExecStop=/usr/bin/docker compose -f docker-compose.dev.yml down
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# --- 9. API service (tsx, no build step) ---------------------------------
+cat > /etc/systemd/system/${project_name}-api.service <<'EOF'
+[Unit]
+Description=GameSphere API
+Requires=${project_name}-infra.service
+After=${project_name}-infra.service
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/opt/${project_name}
+ExecStart=/bin/bash -lc 'pnpm --filter @gamesphere/api start'
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# --- 10. Web service (next start) ----------------------------------------
+cat > /etc/systemd/system/${project_name}-web.service <<'EOF'
+[Unit]
+Description=GameSphere Web
+After=${project_name}-api.service
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/opt/${project_name}
+ExecStart=/bin/bash -lc 'pnpm --filter @gamesphere/web start'
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# --- 11. nginx reverse proxy ---------------------------------------------
+cat > /etc/nginx/sites-available/${project_name} <<'EOF'
+map $http_upgrade $connection_upgrade {
+  default upgrade;
+  ''      close;
+}
+
+server {
+  listen 80 default_server;
+  server_name _;
+
+  # Socket.IO (WebSocket upgrade) — must precede the catch-all.
+  location /socket.io/ {
+    proxy_pass http://127.0.0.1:4000;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection $connection_upgrade;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_read_timeout 600s;
+  }
+
+  location /api/ {
+    proxy_pass http://127.0.0.1:4000;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+  }
+
+  location = /health {
+    proxy_pass http://127.0.0.1:4000;
+    proxy_set_header Host $host;
+  }
+
+  # Everything else -> Next.js
+  location / {
+    proxy_pass http://127.0.0.1:3000;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection $connection_upgrade;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+  }
+}
+EOF
+
+rm -f /etc/nginx/sites-enabled/default
+ln -sf /etc/nginx/sites-available/${project_name} /etc/nginx/sites-enabled/${project_name}
+nginx -t
+systemctl reload nginx
+
+# --- 12. Launch everything ----------------------------------------------
+systemctl daemon-reload
+systemctl enable --now ${project_name}-infra.service
+systemctl enable --now ${project_name}-api.service
+systemctl enable --now ${project_name}-web.service
+
+echo "GameSphere provisioning complete -> http://${public_ip}"

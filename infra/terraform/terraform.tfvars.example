@@ -1,0 +1,15 @@
+# Copy to terraform.tfvars and adjust. All values are optional (sensible
+# defaults live in variables.tf) — override only what you need.
+
+# region        = "ap-south-1"
+# instance_type = "t3.medium"
+
+# Named AWS profile to use. Leave commented to use AWS_ACCESS_KEY_ID /
+# AWS_SECRET_ACCESS_KEY environment variables or the default profile.
+# aws_profile = "gamesphere"
+
+# Lock SSH to your current public IP (find it: curl https://checkip.amazonaws.com).
+# ssh_allowed_cidr = "203.0.113.10/32"
+
+# repo_url    = "https://github.com/Devadatta-Anuragh/gamesphere.git"
+# repo_branch = "main"
